@@ -940,6 +940,8 @@ public:
             s_serverGC->m_networking.ClientConnected(steamID.ConvertToUint64(), pAuthTicket, cbAuthTicket);
         }
 
+        Platform::Print("BeginAuthSession for %llu --> %d\n", (unsigned long long)steamID.ConvertToUint64(), (int)result);
+
         return result;
     }
 
@@ -1119,6 +1121,10 @@ public:
         {
             s_clientGC->m_networking.SetAuthTicket(ticket, pTicket, *pcbTicket);
         }
+
+        char identityString[SteamNetworkingIdentity::k_cchMaxString];
+        pSteamNetworkingIdentity->ToString(identityString, sizeof(identityString));
+        Platform::Print("GetAuthSessionTicket for %s --> %u\n", identityString, ticket);
 
         return ticket;
     }
