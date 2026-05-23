@@ -940,53 +940,32 @@ public:
 
     EBeginAuthSessionResult BeginAuthSession(const void *pAuthTicket, int cbAuthTicket, CSteamID steamID) override
     {
+        // YOLO: always bypass Steam auth, accept everyone. issue #67.
         const uint64_t id64 = steamID.ConvertToUint64();
 
-        if (GetConfig().IsAuthAllowed(id64))
-        {
-            // bypass real Steam auth (issue #67: GSLT path returns failure code 10).
-            // accept the client, register with the GC, dispatch a fake OK callback.
-            if (s_serverGC)
-            {
-                s_serverGC->m_networking.ClientConnected(id64, pAuthTicket, cbAuthTicket);
-            }
-
-            QueueFakeAuthResponse(steamID);
-
-            Platform::Print("BeginAuthSession for %llu --> %d (csgo_gc auth bypass)\n",
-                (unsigned long long)id64, (int)k_EBeginAuthSessionResultOK);
-
-            return k_EBeginAuthSessionResultOK;
-        }
-
-        EBeginAuthSessionResult result = m_original->BeginAuthSession(pAuthTicket, cbAuthTicket, steamID);
-        if (s_serverGC && result == k_EBeginAuthSessionResultOK)
+        if (s_serverGC)
         {
             s_serverGC->m_networking.ClientConnected(id64, pAuthTicket, cbAuthTicket);
         }
 
-        Platform::Print("BeginAuthSession for %llu --> %d\n", (unsigned long long)id64, (int)result);
+        QueueFakeAuthResponse(steamID);
 
-        return result;
+        Platform::Print("BeginAuthSession for %llu --> 0 (forced OK)\n",
+            (unsigned long long)id64);
+
+        return k_EBeginAuthSessionResultOK;
     }
 
     void EndAuthSession(CSteamID steamID) override
     {
         const uint64_t id64 = steamID.ConvertToUint64();
-        const bool bypassed = GetConfig().IsAuthAllowed(id64);
 
         if (s_serverGC)
         {
             s_serverGC->m_networking.ClientDisconnected(id64);
-
-            // also remember to unsub from the socache!!! not sure if this does anything in newer builds though
             s_serverGC->m_gc.PostToGC(GCEvent::ClientSOCacheUnsubscribe, id64, nullptr, 0);
         }
-
-        if (!bypassed)
-        {
-            m_original->EndAuthSession(steamID);
-        }
+        // YOLO: we never called m_original->BeginAuthSession, so do not call EndAuthSession either
     }
 
     void CancelAuthTicket(HAuthTicket hAuthTicket) override
@@ -996,11 +975,10 @@ public:
 
     EUserHasLicenseForAppResult UserHasLicenseForApp(CSteamID steamID, AppId_t appID) override
     {
-        if (GetConfig().IsAuthAllowed(steamID.ConvertToUint64()))
-        {
-            return k_EUserHasLicenseResultHasLicense;
-        }
-        return m_original->UserHasLicenseForApp(steamID, appID);
+        // YOLO: always say yes
+        (void)steamID;
+        (void)appID;
+        return k_EUserHasLicenseResultHasLicense;
     }
 
     bool RequestUserGroupStatus(CSteamID steamIDUser, CSteamID steamIDGroup) override
