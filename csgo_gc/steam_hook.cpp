@@ -1114,7 +1114,7 @@ public:
 
     HAuthTicket GetAuthSessionTicket(void *pTicket, int cbMaxTicket, uint32 *pcbTicket, const SteamNetworkingIdentity *pSteamNetworkingIdentity) override
     {
-        HAuthTicket ticket = m_original->GetAuthSessionTicket(pTicket, cbMaxTicket, pcbTicket, pSteamNetworkingIdentity);
+        HAuthTicket ticket = m_original->GetAuthSessionTicket(pTicket, cbMaxTicket, pcbTicket, nullptr);
         if (s_clientGC && ticket != k_HAuthTicketInvalid)
         {
             s_clientGC->m_networking.SetAuthTicket(ticket, pTicket, *pcbTicket);
