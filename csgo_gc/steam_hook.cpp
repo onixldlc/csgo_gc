@@ -1775,6 +1775,7 @@ struct CallbackHook
 {
     int id;
     CCallbackBase *callback;
+    bool passthrough; // if true, also forward to Steam (we only piggyback)
 };
 
 static bool ShouldHookCallback(int id)
@@ -1792,6 +1793,22 @@ static bool ShouldHookCallback(int id)
     case MicroTxnAuthorizationResponse_t::k_iCallback:
         return true;
 
+    default:
+        return false;
+    }
+}
+
+// callbacks we want to keep a handle to (so we can deliver synthetic events)
+// while still letting Steam register them normally. used by the auth bypass —
+// SRCDS's ValidateAuthTicketResponse_t callback stays registered with Steam,
+// but we also remember the pointer so we can Run() it directly when a
+// whitelisted/bypassed client connects.
+static bool ShouldTrackCallback(int id)
+{
+    switch (id)
+    {
+    case ValidateAuthTicketResponse_t::k_iCallback:
+        return true;
     default:
         return false;
     }
@@ -1819,33 +1836,51 @@ public:
 class CallbackHooks
 {
 public:
-    // returns true if callback was spoofed
+    // returns true if callback was fully spoofed (caller must NOT forward to
+    // Steam). returns false if not hooked OR if only tracked as passthrough
+    // (caller still forwards to Steam).
     bool RegisterCallback(CCallbackBase *callback, int id)
     {
-        if (!ShouldHookCallback(id))
+        if (ShouldHookCallback(id))
         {
+            assert((void *)callback != (void *)0xDDDDDDDD);
+            CallbackHook callbackHook{ id, callback, false };
+            m_hooks.push_back(callbackHook);
+
+            static_cast<CallbackAccessor *>(callback)->SetRegistered();
+            return true;
+        }
+
+        if (ShouldTrackCallback(id))
+        {
+            assert((void *)callback != (void *)0xDDDDDDDD);
+            CallbackHook callbackHook{ id, callback, true };
+            m_hooks.push_back(callbackHook);
+            // do NOT SetRegistered — Steam will do that via the real registration
             return false;
         }
 
-        assert((void *)callback != (void *)0xDDDDDDDD);
-        CallbackHook callbackHook{ id, callback };
-        m_hooks.push_back(callbackHook);
-
-        static_cast<CallbackAccessor *>(callback)->SetRegistered();
-        return true;
+        return false;
     }
 
-    // returns true if callback was spoofed
+    // returns true if callback was fully spoofed (caller must NOT forward to
+    // Steam). returns false if not present OR was only passthrough-tracked
+    // (caller still forwards the unregister to Steam).
     bool UnregisterCallback(CCallbackBase *callback)
     {
-        bool unregistered = false;
+        bool fullySpoofed = false;
+        bool removedAny = false;
 
         // iterate over all hooks, just in case...
         for (auto it = m_hooks.begin(); it != m_hooks.end();)
         {
             if (it->callback == callback)
             {
-                unregistered = true;
+                if (!it->passthrough)
+                {
+                    fullySpoofed = true;
+                }
+                removedAny = true;
                 it = m_hooks.erase(it);
             }
             else
@@ -1854,12 +1889,13 @@ public:
             }
         }
 
-        if (unregistered)
+        if (fullySpoofed)
         {
             static_cast<CallbackAccessor *>(callback)->UnsetRegistered();
             return true;
         }
 
+        (void)removedAny;
         return false;
     }
 
