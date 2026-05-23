@@ -940,6 +940,8 @@ public:
             s_serverGC->m_networking.ClientConnected(steamID.ConvertToUint64(), pAuthTicket, cbAuthTicket);
         }
 
+        Platform::Print("BeginAuthSession for %llu --> %d\n", (unsigned long long)steamID.ConvertToUint64(), (int)result);
+
         return result;
     }
 
@@ -1114,11 +1116,15 @@ public:
 
     HAuthTicket GetAuthSessionTicket(void *pTicket, int cbMaxTicket, uint32 *pcbTicket, const SteamNetworkingIdentity *pSteamNetworkingIdentity) override
     {
-        HAuthTicket ticket = m_original->GetAuthSessionTicket(pTicket, cbMaxTicket, pcbTicket, nullptr);
+        HAuthTicket ticket = m_original->GetAuthSessionTicket(pTicket, cbMaxTicket, pcbTicket, pSteamNetworkingIdentity);
         if (s_clientGC && ticket != k_HAuthTicketInvalid)
         {
             s_clientGC->m_networking.SetAuthTicket(ticket, pTicket, *pcbTicket);
         }
+
+        char identityString[SteamNetworkingIdentity::k_cchMaxString];
+        pSteamNetworkingIdentity->ToString(identityString, sizeof(identityString));
+        Platform::Print("GetAuthSessionTicket for %s --> %u\n", identityString, ticket);
 
         return ticket;
     }
