@@ -4,6 +4,7 @@
 #include "random.h"
 
 constexpr const char *ConfigFilePath = "csgo_gc/config.txt";
+constexpr const char *AuthFilePath = "csgo_gc/auth.txt";
 
 const GCConfig &GetConfig()
 {
@@ -61,6 +62,26 @@ GCConfig::GCConfig()
     m_commendedLeader = config.GetNumber("cmd_leader", m_commendedLeader);
     m_level = config.GetNumber("player_level", m_level);
     m_xp = config.GetNumber("player_cur_xp", m_xp);
+
+    // optional auth bypass config (separate file). absent file -> bypass off.
+    KeyValue auth{ "auth" };
+    if (auth.ParseFromFile(AuthFilePath))
+    {
+        m_authBypassEnabled = auth.GetNumber("bypass", m_authBypassEnabled);
+        m_authAllowAll = auth.GetNumber("allow_all", m_authAllowAll);
+
+        if (const KeyValue *whitelist = auth.GetSubkey("whitelist"))
+        {
+            for (const KeyValue &entry : *whitelist)
+            {
+                uint64_t id = FromString<uint64_t>(entry.String());
+                if (id != 0)
+                {
+                    m_authWhitelist.insert(id);
+                }
+            }
+        }
+    }
 }
 
 float GCConfig::GetRarityWeight(uint32_t rarity) const

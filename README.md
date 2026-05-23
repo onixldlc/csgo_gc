@@ -49,6 +49,11 @@ For GUI inventory editors, see https://github.com/mikkokko/csgo_gc/issues/82. Fo
 ## Configuration
 See [csgo_gc/config.txt](examples/config.txt) for available options.
 
+To work around the SRCDS `STEAMAUTH ... failure code 10` drop (issues #45 and #67),
+drop [csgo_gc/auth.txt](examples/auth.txt) next to `config.txt` and set
+`bypass` to `1`. Use `allow_all` for fully open servers, or list friend SteamID64s
+under `whitelist`. The file is optional; without it, behaviour is unchanged.
+
 ## Building
 Requirements:
 - Git

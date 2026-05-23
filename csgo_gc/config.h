@@ -1,5 +1,7 @@
 #pragma once
 
+#include <unordered_set>
+
 #include "gc_const_csgo.h"
 #include "item_schema.h" // rarity constants
 
@@ -47,6 +49,17 @@ public:
 
     float GetRarityWeight(uint32_t rarity) const;
 
+    // auth bypass (server-side). lets clients past Steam's BeginAuthSession check
+    // when the GSLT/auth path returns failure code 10. see csgo_gc/auth.txt.
+    bool AuthBypassEnabled() const { return m_authBypassEnabled; }
+    bool AuthAllowAll() const { return m_authAllowAll; }
+    bool IsAuthAllowed(uint64_t steamId) const
+    {
+        if (!m_authBypassEnabled) return false;
+        if (m_authAllowAll) return true;
+        return m_authWhitelist.count(steamId) != 0;
+    }
+
 private:
     LogOutput m_logOutput{ LogOutputConsole };
 
@@ -70,6 +83,10 @@ private:
     int m_commendedLeader{ 0 };
     int m_level{ 0 };
     int m_xp{ 0 };
+
+    bool m_authBypassEnabled{ false };
+    bool m_authAllowAll{ false };
+    std::unordered_set<uint64_t> m_authWhitelist;
 
     // default to valve weights
     std::vector<RarityWeight> m_rarityWeights{

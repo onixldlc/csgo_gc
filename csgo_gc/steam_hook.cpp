@@ -3,6 +3,7 @@
 #include "stdafx.h"
 #include "steam_hook.h"
 #include "appid.h"
+#include "config.h"
 #include "gc_client.h"
 #include "gc_server.h"
 #include "platform.h"
@@ -129,6 +130,11 @@ public:
 // client connect/disconnect notifications
 static GCWrapper<ClientGC, NetworkingClient> *s_clientGC;
 static GCWrapper<ServerGC, NetworkingServer> *s_serverGC;
+
+// queued fake ValidateAuthTicketResponse_t callbacks for the auth-bypass path.
+// drained from Hk_SteamGameServer_RunCallbacks to mimic Steam's async dispatch.
+static std::vector<ValidateAuthTicketResponse_t> s_pendingAuthResponses;
+static void QueueFakeAuthResponse(CSteamID steamID);
 
 template<size_t N>
 inline bool InterfaceMatches(const char *name, const char (&compare)[N])
@@ -934,28 +940,53 @@ public:
 
     EBeginAuthSessionResult BeginAuthSession(const void *pAuthTicket, int cbAuthTicket, CSteamID steamID) override
     {
+        const uint64_t id64 = steamID.ConvertToUint64();
+
+        if (GetConfig().IsAuthAllowed(id64))
+        {
+            // bypass real Steam auth (issue #67: GSLT path returns failure code 10).
+            // accept the client, register with the GC, dispatch a fake OK callback.
+            if (s_serverGC)
+            {
+                s_serverGC->m_networking.ClientConnected(id64, pAuthTicket, cbAuthTicket);
+            }
+
+            QueueFakeAuthResponse(steamID);
+
+            Platform::Print("BeginAuthSession for %llu --> %d (csgo_gc auth bypass)\n",
+                (unsigned long long)id64, (int)k_EBeginAuthSessionResultOK);
+
+            return k_EBeginAuthSessionResultOK;
+        }
+
         EBeginAuthSessionResult result = m_original->BeginAuthSession(pAuthTicket, cbAuthTicket, steamID);
         if (s_serverGC && result == k_EBeginAuthSessionResultOK)
         {
-            s_serverGC->m_networking.ClientConnected(steamID.ConvertToUint64(), pAuthTicket, cbAuthTicket);
+            s_serverGC->m_networking.ClientConnected(id64, pAuthTicket, cbAuthTicket);
         }
 
-        Platform::Print("BeginAuthSession for %llu --> %d\n", (unsigned long long)steamID.ConvertToUint64(), (int)result);
+        Platform::Print("BeginAuthSession for %llu --> %d\n", (unsigned long long)id64, (int)result);
 
         return result;
     }
 
     void EndAuthSession(CSteamID steamID) override
     {
+        const uint64_t id64 = steamID.ConvertToUint64();
+        const bool bypassed = GetConfig().IsAuthAllowed(id64);
+
         if (s_serverGC)
         {
-            s_serverGC->m_networking.ClientDisconnected(steamID.ConvertToUint64());
+            s_serverGC->m_networking.ClientDisconnected(id64);
 
             // also remember to unsub from the socache!!! not sure if this does anything in newer builds though
-            s_serverGC->m_gc.PostToGC(GCEvent::ClientSOCacheUnsubscribe, steamID.ConvertToUint64(), nullptr, 0);
+            s_serverGC->m_gc.PostToGC(GCEvent::ClientSOCacheUnsubscribe, id64, nullptr, 0);
         }
 
-        m_original->EndAuthSession(steamID);
+        if (!bypassed)
+        {
+            m_original->EndAuthSession(steamID);
+        }
     }
 
     void CancelAuthTicket(HAuthTicket hAuthTicket) override
@@ -965,6 +996,10 @@ public:
 
     EUserHasLicenseForAppResult UserHasLicenseForApp(CSteamID steamID, AppId_t appID) override
     {
+        if (GetConfig().IsAuthAllowed(steamID.ConvertToUint64()))
+        {
+            return k_EUserHasLicenseResultHasLicense;
+        }
         return m_original->UserHasLicenseForApp(steamID, appID);
     }
 
@@ -1841,6 +1876,15 @@ private:
 
 static CallbackHooks s_callbackHooks;
 
+static void QueueFakeAuthResponse(CSteamID steamID)
+{
+    ValidateAuthTicketResponse_t response{};
+    response.m_SteamID = steamID;
+    response.m_eAuthSessionResponse = k_EAuthSessionResponseOK;
+    response.m_OwnerSteamID = steamID;
+    s_pendingAuthResponses.push_back(response);
+}
+
 static void (*Og_SteamAPI_RegisterCallback)(class CCallbackBase *pCallback, int iCallback);
 static void (*Og_SteamAPI_UnregisterCallback)(class CCallbackBase *pCallback);
 static void (*Og_SteamAPI_RunCallbacks)();
@@ -1935,6 +1979,16 @@ static void Hk_SteamAPI_RunCallbacks()
 static void Hk_SteamGameServer_RunCallbacks()
 {
     Og_SteamGameServer_RunCallbacks();
+
+    if (!s_pendingAuthResponses.empty())
+    {
+        std::vector<ValidateAuthTicketResponse_t> pending;
+        pending.swap(s_pendingAuthResponses);
+        for (ValidateAuthTicketResponse_t &resp : pending)
+        {
+            s_callbackHooks.RunCallback(true, ValidateAuthTicketResponse_t::k_iCallback, &resp);
+        }
+    }
 
     if (s_serverGC)
     {

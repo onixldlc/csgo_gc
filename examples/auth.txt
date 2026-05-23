@@ -1,0 +1,32 @@
+// csgo_gc auth bypass — workaround for STEAMAUTH failure code 10 on SRCDS
+// (see https://github.com/mikkokko/csgo_gc/issues/67 and #45).
+//
+// place this file next to config.txt (path: csgo_gc/auth.txt). if the file is
+// missing the bypass stays off and the server behaves exactly like before.
+//
+// when bypass is on, csgo_gc intercepts ISteamGameServer::BeginAuthSession,
+// EndAuthSession and UserHasLicenseForApp for allowed SteamIDs and returns
+// success without consulting Steam. a fake ValidateAuthTicketResponse_t
+// (k_EAuthSessionResponseOK) is dispatched the next tick so the server lets
+// the client into the game instead of dropping them.
+//
+// SECURITY: bypassing Steam auth means VAC/license checks no longer protect
+// your server. only enable this for friends-only / private matches.
+
+"auth"
+{
+    // 0 = off (default; preserves stock csgo_gc behaviour)
+    // 1 = on; consult allow_all / whitelist below
+    "bypass"        "0"
+
+    // "we ball / yolo / who-cares" mode. 1 = accept any SteamID once bypass is on.
+    "allow_all"     "0"
+
+    // SteamID64 allowlist used when bypass=1 and allow_all=0.
+    // keys are arbitrary, values are SteamID64 numbers.
+    "whitelist"
+    {
+        // "friend_a"  "76561198000000001"
+        // "friend_b"  "76561198000000002"
+    }
+}
