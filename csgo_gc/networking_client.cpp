@@ -49,9 +49,24 @@ void NetworkingClient::Update(ClientGC *gc)
 
 static bool ValidateTicket(std::unordered_map<uint32_t, AuthTicket> &tickets, uint64_t steamId, const void *data, uint32_t size)
 {
+    // fast path: exact byte match. this works when Steam doesn't mutate the
+    // ticket between client GetAuthSessionTicket() and server BeginAuthSession().
     for (auto &pair : tickets)
     {
         if (pair.second.buffer.size() == size && !memcmp(pair.second.buffer.data(), data, size))
+        {
+            pair.second.steamId = steamId;
+            return true;
+        }
+    }
+
+    // fallback: match by gameserver SteamID. when the client requested a ticket
+    // for this exact server, accept the csgo_gc handshake even if the ticket
+    // bytes differ (Steam can append context bytes server-side, and servers
+    // running with the auth bypass forward whatever they received from SRCDS).
+    for (auto &pair : tickets)
+    {
+        if (pair.second.serverSteamId != 0 && pair.second.serverSteamId == steamId)
         {
             pair.second.steamId = steamId;
             return true;
@@ -118,10 +133,11 @@ void NetworkingClient::SendMessage(const void *data, uint32_t size)
     assert(result == k_EResultOK);
 }
 
-void NetworkingClient::SetAuthTicket(uint32_t handle, const void *data, uint32_t size)
+void NetworkingClient::SetAuthTicket(uint32_t handle, const void *data, uint32_t size, uint64_t serverSteamId)
 {
     AuthTicket &ticket = m_tickets[handle];
     ticket.steamId = 0;
+    ticket.serverSteamId = serverSteamId;
     const uint8_t *bytes = reinterpret_cast<const uint8_t *>(data);
     ticket.buffer.assign(bytes, bytes + size);
 }

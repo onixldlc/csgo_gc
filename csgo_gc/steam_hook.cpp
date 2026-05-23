@@ -1154,7 +1154,13 @@ public:
         HAuthTicket ticket = m_original->GetAuthSessionTicket(pTicket, cbMaxTicket, pcbTicket, pSteamNetworkingIdentity);
         if (s_clientGC && ticket != k_HAuthTicketInvalid)
         {
-            s_clientGC->m_networking.SetAuthTicket(ticket, pTicket, *pcbTicket);
+            // capture the server's SteamID (returns 0 if identity isn't a SteamID)
+            // so the networking layer can fall back to SteamID-based validation
+            // when server-side ticket bytes don't match (eg. csgo_gc auth bypass).
+            uint64_t serverSteamId = pSteamNetworkingIdentity
+                ? pSteamNetworkingIdentity->GetSteamID64()
+                : 0;
+            s_clientGC->m_networking.SetAuthTicket(ticket, pTicket, *pcbTicket, serverSteamId);
         }
 
         char identityString[SteamNetworkingIdentity::k_cchMaxString];
