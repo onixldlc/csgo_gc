@@ -130,6 +130,11 @@ public:
 static GCWrapper<ClientGC, NetworkingClient> *s_clientGC;
 static GCWrapper<ServerGC, NetworkingServer> *s_serverGC;
 
+// forced-OK auth bypass (issue #67). engine's ValidateAuthTicketResponse_t
+// callback pointers, captured at registration so we can synthesise OK responses.
+static std::vector<CCallbackBase *> s_authCallbacks;
+static std::vector<ValidateAuthTicketResponse_t> s_pendingAuthResponses;
+
 template<size_t N>
 inline bool InterfaceMatches(const char *name, const char (&compare)[N])
 {
@@ -934,15 +939,20 @@ public:
 
     EBeginAuthSessionResult BeginAuthSession(const void *pAuthTicket, int cbAuthTicket, CSteamID steamID) override
     {
-        EBeginAuthSessionResult result = m_original->BeginAuthSession(pAuthTicket, cbAuthTicket, steamID);
-        if (s_serverGC && result == k_EBeginAuthSessionResultOK)
+        // force auth OK (issue #67). skip Steam, accept the client, queue a
+        // synthetic ValidateAuthTicketResponse_t for the engine.
+        if (s_serverGC)
         {
             s_serverGC->m_networking.ClientConnected(steamID.ConvertToUint64(), pAuthTicket, cbAuthTicket);
         }
 
-        Platform::Print("BeginAuthSession for %llu --> %d\n", (unsigned long long)steamID.ConvertToUint64(), (int)result);
+        ValidateAuthTicketResponse_t r{};
+        r.m_SteamID = steamID;
+        r.m_eAuthSessionResponse = k_EAuthSessionResponseOK;
+        r.m_OwnerSteamID = steamID;
+        s_pendingAuthResponses.push_back(r);
 
-        return result;
+        return k_EBeginAuthSessionResultOK;
     }
 
     void EndAuthSession(CSteamID steamID) override
@@ -1848,6 +1858,11 @@ static void (*Og_SteamGameServer_RunCallbacks)();
 
 static void Hk_SteamAPI_RegisterCallback(class CCallbackBase *pCallback, int iCallback)
 {
+    if (iCallback == ValidateAuthTicketResponse_t::k_iCallback)
+    {
+        s_authCallbacks.push_back(pCallback); // observe; Steam still gets normal registration
+    }
+
     if (s_callbackHooks.RegisterCallback(pCallback, iCallback))
     {
         return;
@@ -1858,6 +1873,12 @@ static void Hk_SteamAPI_RegisterCallback(class CCallbackBase *pCallback, int iCa
 
 static void Hk_SteamAPI_UnregisterCallback(class CCallbackBase *pCallback)
 {
+    auto it = std::find(s_authCallbacks.begin(), s_authCallbacks.end(), pCallback);
+    if (it != s_authCallbacks.end())
+    {
+        s_authCallbacks.erase(it);
+    }
+
     if (s_callbackHooks.UnregisterCallback(pCallback))
     {
         return;
@@ -1935,6 +1956,19 @@ static void Hk_SteamAPI_RunCallbacks()
 static void Hk_SteamGameServer_RunCallbacks()
 {
     Og_SteamGameServer_RunCallbacks();
+
+    // drain forced-OK auth responses produced by SteamGameServerProxy::BeginAuthSession
+    for (auto &r : s_pendingAuthResponses)
+    {
+        for (CCallbackBase *cb : s_authCallbacks)
+        {
+            if (static_cast<CallbackAccessor *>(cb)->IsGameServer())
+            {
+                cb->Run(&r);
+            }
+        }
+    }
+    s_pendingAuthResponses.clear();
 
     if (s_serverGC)
     {
